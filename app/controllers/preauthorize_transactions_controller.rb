@@ -33,6 +33,19 @@ class PreauthorizeTransactionsController < ApplicationController
     validates :delivery_method, inclusion: { in: %w(shipping pickup), message: "%{value} is not shipping or pickup." }, allow_nil: true
   }
 
+  PriceBreakDownLocals = EntityUtils.define_builder(
+    [:listing_price: :money, :mandatory],
+    [:localized_unit_type, :string],
+    [:booking, :to_bool, :default: false],
+    [:start_on, :date],
+    [:end_on, :date],
+    [:duration, :fixnum],
+    [:quantity, :fixnum],
+    [:subtotal, :money],
+    [:sum, :money],
+    [:shipping_price, :money])
+
+
   PreauthorizeBookingForm = FormUtils.merge("ListingConversation", PreauthorizeMessageForm, BookingForm)
 
   ListingQuery = MarketplaceService::Listing::Query
@@ -52,6 +65,16 @@ class PreauthorizeTransactionsController < ApplicationController
                         quantity: quantity,
                         shipping_enabled: delivery_method == :shipping)
 
+    price_break_down_locals = PriceBreakDownLocals.call({
+      booking:  false,
+      quantity: quantity,
+      listing_price: listing[:price],
+      localized_unit_type: listing[:unit_type].present? ? translate_quantity_unit(listing[:unit_type]) : nil,
+      subtotal: vprms[:subtotal],
+      sum: vprms[:total_price],
+      shipping_price: Maybe(listing[:shipping_price]).or_else(nil)
+    })
+
     render "listing_conversations/initiate", locals: {
       preauthorize_form: PreauthorizeMessageForm.new,
       listing: vprms[:listing],
@@ -62,7 +85,8 @@ class PreauthorizeTransactionsController < ApplicationController
       author: query_person_entity(vprms[:listing][:author_id]),
       action_button_label: vprms[:action_button_label],
       expiration_period: MarketplaceService::Transaction::Entity.authorization_expiration_period(vprms[:payment_type]),
-      form_action: initiated_order_path(person_id: @current_user.id, listing_id: vprms[:listing][:id])
+      form_action: initiated_order_path(person_id: @current_user.id, listing_id: vprms[:listing][:id]),
+      price_break_down_locals: price_break_down_locals
     }
   end
 
@@ -150,6 +174,17 @@ class PreauthorizeTransactionsController < ApplicationController
         raise ArgumentError.new("Unknown payment type #{vprms[:payment_type]} for booking")
       end
 
+    price_break_down_locals = PriceBreakDownLocals.call({
+      booking:  true,
+      start_on: booking_data[:start_on],
+      end_on:   booking_data[:end_on],
+      duration: booking_data[:duration],
+      listing_price: listing[:price],
+      localized_unit_type: listing[:unit_type].present? ? translate_quantity_unit(listing[:unit_type]) : nil,
+      subtotal: vprms[:subtotal],
+      sum: vprms[:total_price]
+    })
+
     render view, locals: {
       preauthorize_form: PreauthorizeBookingForm.new({
           start_on: booking_data[:start_on],
@@ -163,7 +198,8 @@ class PreauthorizeTransactionsController < ApplicationController
       author: query_person_entity(vprms[:listing][:author_id]),
       action_button_label: vprms[:action_button_label],
       expiration_period: MarketplaceService::Transaction::Entity.authorization_expiration_period(vprms[:payment_type]),
-      form_action: booked_path(person_id: @current_user.id, listing_id: vprms[:listing][:id])
+      form_action: booked_path(person_id: @current_user.id, listing_id: vprms[:listing][:id]),
+      price_break_down_locals: price_break_down_locals
     }.merge(gateway_locals)
   end
 
@@ -247,6 +283,15 @@ class PreauthorizeTransactionsController < ApplicationController
     vprms = view_params(listing_id: params[:listing_id], quantity: quantity)
     braintree_settings = BraintreePaymentQuery.braintree_settings(@current_community.id)
 
+    price_break_down_locals = PriceBreakDownLocals.call({
+      booking:  false,
+      quantity: quantity,
+      listing_price: listing[:price],
+      localized_unit_type: listing[:unit_type].present? ? translate_quantity_unit(listing[:unit_type]) : nil,
+      subtotal: vprms[:subtotal],
+      sum: vprms[:total_price]
+    })
+
     render "listing_conversations/preauthorize", locals: {
       preauthorize_form: PreauthorizeMessageForm.new,
       braintree_client_side_encryption_key: braintree_settings[:braintree_client_side_encryption_key],
@@ -258,7 +303,8 @@ class PreauthorizeTransactionsController < ApplicationController
       author: query_person_entity(vprms[:listing][:author_id]),
       action_button_label: vprms[:action_button_label],
       expiration_period: MarketplaceService::Transaction::Entity.authorization_expiration_period(vprms[:payment_type]),
-      form_action: preauthorized_payment_path(person_id: @current_user.id, listing_id: vprms[:listing][:id])
+      form_action: preauthorized_payment_path(person_id: @current_user.id, listing_id: vprms[:listing][:id]),
+      price_break_down_locals: price_break_down_locals
     }
   end
 
